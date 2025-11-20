@@ -150,6 +150,23 @@ func (service *serviceApp) LoginWithCode(ctx context.Context, phoneNumber string
 		return loginCode, pkgError.ErrAlreadyLoggedIn
 	}
 
+	// Wait for the connection to be fully established before pairing
+	// The Connect() call in Reconnect() is asynchronous and needs time to establish the WebSocket connection
+	logrus.Info("[DEBUG] Waiting for connection to be fully established...")
+	maxWaitTime := 10 * time.Second
+	checkInterval := 100 * time.Millisecond
+	startTime := time.Now()
+
+	for !client.IsConnected() {
+		if time.Since(startTime) > maxWaitTime {
+			logrus.Error("[DEBUG] Timeout waiting for connection to be established")
+			return loginCode, fmt.Errorf("timeout waiting for connection to be established")
+		}
+		time.Sleep(checkInterval)
+	}
+
+	logrus.Infof("[DEBUG] Connection established successfully, ready to pair")
+
 	logrus.Infof("[DEBUG] Starting phone pairing for number: %s", phoneNumber)
 	loginCode, err = client.PairPhone(ctx, phoneNumber, true, whatsmeow.PairClientChrome, "Chrome (Linux)")
 	if err != nil {
