@@ -11,16 +11,25 @@ import (
     "time"
 
     "github.com/aldinokemal/go-whatsapp-web-multidevice/config"
+    domainAPIKey "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/apikey"
     domainApp "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/app"
+    domainAudit "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/audit"
     domainChat "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chat"
     domainChatStorage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/chatstorage"
     domainGroup "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/group"
     domainMessage "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/message"
     domainNewsletter "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/newsletter"
     domainSend "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/send"
+    domainServer "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/server"
+    domainTenant "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/tenant"
     domainUser "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/user"
     "github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/chatstorage"
+    managementmigrations "github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/management/migrations"
+    managementpostgres "github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/management/postgres"
     "github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
+    auditlogger "github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/audit"
+    ratelimiterpkg "github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/ratelimiter"
+    tenantcontext "github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/tenantcontext"
     "github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
     "github.com/aldinokemal/go-whatsapp-web-multidevice/usecase"
     _ "github.com/lib/pq"
@@ -42,6 +51,18 @@ var (
     chatStorageDB   *sql.DB
     chatStorageRepo domainChatStorage.IChatStorageRepository
 
+    // Management DB
+    managementDB *sql.DB
+    apiKeyRepo   domainAPIKey.IAPIKeyRepository
+    tenantRepo   domainTenant.ITenantRepository
+    serverRepo   domainServer.IServerRepository
+    auditRepo    domainAudit.IAuditRepository
+
+    // Shared services
+    tenantProvider domainTenant.TenantProvider
+    rateLimiter    ratelimiterpkg.RateLimiter
+    auditLogger    auditlogger.Logger
+
     // Usecase
     appUsecase        domainApp.IAppUsecase
     chatUsecase       domainChat.IChatUsecase
@@ -50,6 +71,9 @@ var (
     messageUsecase    domainMessage.IMessageUsecase
     groupUsecase      domainGroup.IGroupUsecase
     newsletterUsecase domainNewsletter.INewsletterUsecase
+    apiKeyUsecase     domainAPIKey.IAPIKeyUsecase
+
+    serverNodeID string
 )
 
 // rootCmd represents the base command when called without any subcommands
@@ -126,6 +150,23 @@ func initEnvConfig() {
     }
     if viper.IsSet("whatsapp_account_validation") {
         config.WhatsappAccountValidation = viper.GetBool("whatsapp_account_validation")
+    }
+
+    // API key settings
+    if envKeySalt := viper.GetString("api_key_salt"); envKeySalt != "" {
+        config.APIKeySalt = envKeySalt
+    }
+    if envKeyPrefix := viper.GetString("api_key_prefix"); envKeyPrefix != "" {
+        config.APIKeyPrefix = envKeyPrefix
+    }
+    if viper.IsSet("api_rate_limit_per_minute") {
+        config.APIDefaultRateLimitPerMinute = viper.GetInt("api_rate_limit_per_minute")
+    }
+    if viper.IsSet("api_rate_limit_window_seconds") {
+        config.APIRateLimitWindowSeconds = viper.GetInt("api_rate_limit_window_seconds")
+    }
+    if viper.IsSet("api_rate_limit_flush_interval_seconds") {
+        config.APIRateLimitFlushIntervalSeconds = viper.GetInt("api_rate_limit_flush_interval_seconds")
     }
 
     // Management Database settings
@@ -317,6 +358,54 @@ func initChatStorage() (*sql.DB, error) {
     return db, nil
 }
 
+func initManagementLayer(ctx context.Context) {
+    if config.ManagementDBURI == "" {
+        logrus.Fatalln("MANAGEMENT_DB_URI must be configured")
+    }
+
+    db, err := managementpostgres.NewDB(&managementpostgres.DBConfig{
+        URI:         config.ManagementDBURI,
+        MaxConns:    config.ManagementDBMaxConns,
+        MinConns:    config.ManagementDBMinConns,
+        MaxIdleTime: config.ManagementDBMaxIdleTime,
+        MaxLifetime: config.ManagementDBMaxLifetime,
+    })
+    if err != nil {
+        logrus.Fatalf("failed to connect to management database: %v", err)
+    }
+    managementDB = db
+
+    runner := managementmigrations.NewRunner(db)
+    if err := runner.RunMigrations(); err != nil {
+        logrus.Fatalf("failed to run management migrations: %v", err)
+    }
+
+    apiKeyRepo = managementpostgres.NewAPIKeyRepository(db)
+    tenantRepo = managementpostgres.NewTenantRepository(db)
+    serverRepo = managementpostgres.NewServerRepository(db)
+    auditRepo = managementpostgres.NewAuditRepository(db)
+
+    tenantProvider = tenantcontext.NewContextProvider()
+
+    if config.ServerID == "" {
+        logrus.Fatalln("SERVER_ID must be set when using the management database")
+    }
+    node, err := serverRepo.GetNodeByServerID(ctx, config.ServerID)
+    if err != nil {
+        logrus.Fatalf("failed to load server node %s: %v", config.ServerID, err)
+    }
+    serverNodeID = node.ID
+
+    apiKeyUsecase = usecase.NewAPIKeyService(apiKeyRepo, tenantRepo, config.APIKeySalt, config.APIKeyPrefix)
+
+    rateLimiter = ratelimiterpkg.NewLimiter(apiKeyRepo,
+        ratelimiterpkg.WithWindow(time.Duration(config.APIRateLimitWindowSeconds)*time.Second),
+        ratelimiterpkg.WithFlushInterval(time.Duration(config.APIRateLimitFlushIntervalSeconds)*time.Second),
+    )
+
+    auditLogger = auditlogger.NewLogger(auditRepo, auditlogger.WithServerNodeID(serverNodeID))
+}
+
 func initApp() {
     if config.AppDebug {
         config.WhatsappLogLevel = "DEBUG"
@@ -340,6 +429,8 @@ func initApp() {
     chatStorageRepo = chatstorage.NewStorageRepository(chatStorageDB)
     chatStorageRepo.InitializeSchema()
 
+    initManagementLayer(ctx)
+
     whatsappDB := whatsapp.InitWaDB(ctx, config.DBURI)
     var keysDB *sqlstore.Container
     if config.DBKeysURI != "" {
@@ -349,13 +440,13 @@ func initApp() {
     whatsappCli = whatsapp.InitWaCLI(ctx, whatsappDB, keysDB, chatStorageRepo)
 
     // Usecase
-    appUsecase = usecase.NewAppService(chatStorageRepo)
-    chatUsecase = usecase.NewChatService(chatStorageRepo)
-    sendUsecase = usecase.NewSendService(appUsecase, chatStorageRepo)
-    userUsecase = usecase.NewUserService()
-    messageUsecase = usecase.NewMessageService(chatStorageRepo)
-    groupUsecase = usecase.NewGroupService()
-    newsletterUsecase = usecase.NewNewsletterService()
+    appUsecase = usecase.NewAppService(chatStorageRepo, tenantProvider)
+    chatUsecase = usecase.NewChatService(chatStorageRepo, tenantProvider)
+    sendUsecase = usecase.NewSendService(appUsecase, chatStorageRepo, tenantProvider)
+    userUsecase = usecase.NewUserService(tenantProvider)
+    messageUsecase = usecase.NewMessageService(chatStorageRepo, tenantProvider)
+    groupUsecase = usecase.NewGroupService(tenantProvider)
+    newsletterUsecase = usecase.NewNewsletterService(tenantProvider)
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.

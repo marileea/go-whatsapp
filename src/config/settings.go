@@ -43,6 +43,13 @@ var (
     ChatStorageEnableForeignKeys = true
     ChatStorageEnableWAL         = true
 
+    // API Keys & Rate Limits
+    APIKeySalt                         = "change-me"
+    APIKeyPrefix                       = "sk_live"
+    APIDefaultRateLimitPerMinute       = 60
+    APIRateLimitWindowSeconds          = 60
+    APIRateLimitFlushIntervalSeconds   = 5
+
     // Management Database Settings
     ManagementDBURI         = "postgres://localhost:5432/management?sslmode=disable"
     ManagementDBMaxConns    = 25
