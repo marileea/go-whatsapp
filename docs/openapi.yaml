@@ -2,7 +2,16 @@ openapi: "3.0.0"
 info:
   title: WhatsApp API MultiDevice
   version: 6.12.0
-  description: This API is used for sending whatsapp via API
+  description: |
+    This API is used for sending whatsapp via API.
+    
+    The application supports an optional Management Database (PostgreSQL) for multi-tenant operations including:
+    - Tenant management with tier-based access control
+    - API key authentication with scopes and rate limiting
+    - Server capacity management and slot allocation
+    - Audit logging and billing snapshots
+    
+    See README.md for Management Database configuration details.
 servers:
   - url: http://localhost:3000
 tags:

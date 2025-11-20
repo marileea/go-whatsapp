@@ -125,6 +125,13 @@ To use environment variables:
 | `WHATSAPP_WEBHOOK`            | Webhook URL(s) for events (comma-separated) | -                                            | `WHATSAPP_WEBHOOK=https://webhook.site/xxx` |
 | `WHATSAPP_WEBHOOK_SECRET`     | Webhook secret for validation               | `secret`                                     | `WHATSAPP_WEBHOOK_SECRET=super-secret-key`  |
 | `WHATSAPP_ACCOUNT_VALIDATION` | Enable account validation                   | `true`                                       | `WHATSAPP_ACCOUNT_VALIDATION=false`         |
+| `MANAGEMENT_DB_URI`           | Management database URI (PostgreSQL)        | `postgres://localhost:5432/management`       | `MANAGEMENT_DB_URI=postgres://user:pass@host/db` |
+| `MANAGEMENT_DB_MAX_CONNS`     | Maximum database connections                | `25`                                         | `MANAGEMENT_DB_MAX_CONNS=50`                |
+| `MANAGEMENT_DB_MIN_CONNS`     | Minimum idle database connections           | `5`                                          | `MANAGEMENT_DB_MIN_CONNS=10`                |
+| `MANAGEMENT_DB_MAX_IDLE_TIME` | Maximum connection idle time                | `15m`                                        | `MANAGEMENT_DB_MAX_IDLE_TIME=30m`           |
+| `MANAGEMENT_DB_MAX_LIFETIME`  | Maximum connection lifetime                 | `1h`                                         | `MANAGEMENT_DB_MAX_LIFETIME=2h`             |
+| `SERVER_ID`                   | Unique server identifier                    | -                                            | `SERVER_ID=server-001`                      |
+| `SERVER_REGION`               | Server region identifier                    | `default`                                    | `SERVER_REGION=us-east-1`                   |
 
 Note: Command-line flags will override any values set in environment variables or `.env` file.
 
@@ -511,6 +518,51 @@ You can fork or edit this source code !
 
 - Please do this if you have an error (invalid flag in pkg-config --cflags: -Xpreprocessor)
   `export CGO_CFLAGS_ALLOW="-Xpreprocessor"`
+
+## Management Database
+
+The application includes an optional **Management Database** for multi-tenant operations, server capacity management, API key authentication, rate limiting, and audit logging.
+
+### Database Schema
+
+The management database uses PostgreSQL and includes the following tables:
+
+- **tenants** - Customer/tenant information with tier and status
+- **tenant_contact** - Contact information for tenants
+- **api_keys** - API keys with scopes and rate limits
+- **server_nodes** - Server infrastructure tracking
+- **server_slots** - Capacity allocation slots
+- **tenant_server_assignments** - Tenant-to-server mappings
+- **rate_limit_counters** - Rate limiting counters per resource
+- **audit_logs** - Audit trail for all actions
+- **server_metrics** - Server performance metrics
+- **billing_snapshots** - Billing and usage snapshots
+
+### Running Migrations
+
+The management database schema is automatically applied on application startup when a valid `MANAGEMENT_DB_URI` is configured. The migration system is embedded in the application and requires no external migration tools.
+
+To configure the management database:
+
+1. Set up a PostgreSQL database
+2. Configure the connection URI:
+   ```bash
+   export MANAGEMENT_DB_URI="postgres://user:password@localhost:5432/management?sslmode=disable"
+   export SERVER_ID="server-001"
+   export SERVER_REGION="us-east-1"
+   ```
+3. Start the application - migrations will run automatically
+
+### Repository Layer
+
+The management database provides repository implementations for:
+
+- **Tenant Repository** - CRUD operations for tenants and contacts
+- **Server Repository** - Server node management, slot allocation, assignments
+- **API Key Repository** - API key management and rate limiting
+- **Audit Repository** - Audit log creation and querying, billing snapshots
+
+All repositories are located in `src/infrastructure/management/postgres/` and implement interfaces defined in their respective domain packages (`src/domains/tenant/`, `src/domains/server/`, `src/domains/apikey/`, `src/domains/audit/`).
 
 ## Important
 
