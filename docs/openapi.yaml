@@ -11,6 +11,9 @@ info:
     - Server capacity management and slot allocation
     - Audit logging and billing snapshots
     
+    Every REST endpoint must include an `X-API-Key` header (or `Authorization: Bearer <key>`). When a client exceeds
+    their tenant quota the API returns **HTTP 429** with a `Retry-After` header.
+    
     See README.md for Management Database configuration details.
 servers:
   - url: http://localhost:3000
@@ -30,7 +33,7 @@ tags:
   - name: newsletter
     description: newsletter setting
 security:
-  - basicAuth: []
+  - ApiKeyAuth: []
 
 paths:
   /app/login:
@@ -2416,9 +2419,12 @@ paths:
 
 components:
   securitySchemes:
-    basicAuth:
-      type: http
-      scheme: basic
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: |
+        Tenant-scoped API key. You may also send it via `Authorization: Bearer <key>`.
   schemas:
     CreateGroupResponse:
       type: object

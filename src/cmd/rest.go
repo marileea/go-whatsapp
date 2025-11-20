@@ -71,7 +71,7 @@ func restServer(_ *cobra.Command, _ []string) {
 	}
 	app.Use(cors.New(cors.Config{
 		AllowOrigins: "*",
-		AllowHeaders: "Origin, Content-Type, Accept",
+		AllowHeaders: "Origin, Content-Type, Accept, Authorization, X-API-Key",
 	}))
 
 	if len(config.AppBasicAuthCredential) > 0 {
@@ -95,14 +95,29 @@ func restServer(_ *cobra.Command, _ []string) {
 		apiGroup = app.Group(config.AppBasePath)
 	}
 
+	if apiKeyRepo == nil || tenantRepo == nil || serverRepo == nil || rateLimiter == nil || auditLogger == nil {
+		logrus.Fatalln("API security components are not initialized")
+	}
+
+	securedGroup := apiGroup.Group("", middleware.APIKeyAuth(middleware.APIKeyConfig{
+		APIKeyRepo:       apiKeyRepo,
+		TenantRepo:       tenantRepo,
+		ServerRepo:       serverRepo,
+		RateLimiter:      rateLimiter,
+		AuditLogger:      auditLogger,
+		ServerNodeID:     serverNodeID,
+		DefaultRateLimit: config.APIDefaultRateLimitPerMinute,
+		HashSalt:         config.APIKeySalt,
+	}))
+
 	// Rest
-	rest.InitRestApp(apiGroup, appUsecase)
-	rest.InitRestChat(apiGroup, chatUsecase)
-	rest.InitRestSend(apiGroup, sendUsecase)
-	rest.InitRestUser(apiGroup, userUsecase)
-	rest.InitRestMessage(apiGroup, messageUsecase)
-	rest.InitRestGroup(apiGroup, groupUsecase)
-	rest.InitRestNewsletter(apiGroup, newsletterUsecase)
+	rest.InitRestApp(securedGroup, appUsecase)
+	rest.InitRestChat(securedGroup, chatUsecase)
+	rest.InitRestSend(securedGroup, sendUsecase)
+	rest.InitRestUser(securedGroup, userUsecase)
+	rest.InitRestMessage(securedGroup, messageUsecase)
+	rest.InitRestGroup(securedGroup, groupUsecase)
+	rest.InitRestNewsletter(securedGroup, newsletterUsecase)
 
 	apiGroup.Get("/", func(c *fiber.Ctx) error {
 		return c.Render("views/index", fiber.Map{
