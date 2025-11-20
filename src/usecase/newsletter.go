@@ -1,29 +1,32 @@
 package usecase
 
 import (
-	"context"
+    "context"
 
-	domainNewsletter "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/newsletter"
-	"github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
-	"github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
-	"github.com/aldinokemal/go-whatsapp-web-multidevice/validations"
+    domainNewsletter "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/newsletter"
+    domainTenant "github.com/aldinokemal/go-whatsapp-web-multidevice/domains/tenant"
+    "github.com/aldinokemal/go-whatsapp-web-multidevice/infrastructure/whatsapp"
+    "github.com/aldinokemal/go-whatsapp-web-multidevice/pkg/utils"
+    "github.com/aldinokemal/go-whatsapp-web-multidevice/validations"
 )
 
-type serviceNewsletter struct{}
+type serviceNewsletter struct {
+    tenantProvider domainTenant.TenantProvider
+}
 
-func NewNewsletterService() domainNewsletter.INewsletterUsecase {
-	return &serviceNewsletter{}
+func NewNewsletterService(tenantProvider domainTenant.TenantProvider) domainNewsletter.INewsletterUsecase {
+    return &serviceNewsletter{tenantProvider: tenantProvider}
 }
 
 func (service serviceNewsletter) Unfollow(ctx context.Context, request domainNewsletter.UnfollowRequest) (err error) {
-	if err = validations.ValidateUnfollowNewsletter(ctx, request); err != nil {
-		return err
-	}
+    if err = validations.ValidateUnfollowNewsletter(ctx, request); err != nil {
+        return err
+    }
 
-	JID, err := utils.ValidateJidWithLogin(whatsapp.GetClient(), request.NewsletterID)
-	if err != nil {
-		return err
-	}
+    JID, err := utils.ValidateJidWithLogin(whatsapp.GetClient(), request.NewsletterID)
+    if err != nil {
+        return err
+    }
 
-	return whatsapp.GetClient().UnfollowNewsletter(ctx, JID)
+    return whatsapp.GetClient().UnfollowNewsletter(ctx, JID)
 }

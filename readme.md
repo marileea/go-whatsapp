@@ -80,6 +80,10 @@ Download:
 
   You may modify this by using the option below:
   - `--webhook-secret="secret"`
+- **Per-tenant API keys, rate limits, and audit logging**
+  - Every REST request must include an `X-API-Key` header (or `Authorization: Bearer <key>`)
+  - Keys are scoped to tenants and enforced through the management database and token-bucket limiter
+  - Automatic audit logs record method, path, status, latency, tenant, and API key identifiers
 - **Webhook Payload Documentation**
   For detailed webhook payload schemas, security implementation, and integration examples,
   see [Webhook Payload Documentation](./docs/webhook-payload.md)
@@ -118,6 +122,11 @@ To use environment variables:
 | `APP_BASIC_AUTH`              | Basic authentication credentials            | -                                            | `APP_BASIC_AUTH=user1:pass1,user2:pass2`    |
 | `APP_BASE_PATH`               | Base path for subpath deployment            | -                                            | `APP_BASE_PATH=/gowa`                       |
 | `APP_TRUSTED_PROXIES`         | Trusted proxy IP ranges for reverse proxy   | -                                            | `APP_TRUSTED_PROXIES=0.0.0.0/0`             |
+| `API_KEY_SALT`                | HMAC salt used when hashing API keys        | `change-me`                                  | `API_KEY_SALT=my-super-secret-salt`         |
+| `API_KEY_PREFIX`              | Prefix prepended to generated API keys      | `sk_live`                                    | `API_KEY_PREFIX=sk_prod`                    |
+| `API_RATE_LIMIT_PER_MINUTE`   | Default per-tenant request limit per minute | `60`                                         | `API_RATE_LIMIT_PER_MINUTE=120`             |
+| `API_RATE_LIMIT_WINDOW_SECONDS` | Rate-limit window duration in seconds     | `60`                                         | `API_RATE_LIMIT_WINDOW_SECONDS=30`         |
+| `API_RATE_LIMIT_FLUSH_INTERVAL_SECONDS` | Interval for persisting limiter state | `5`                                          | `API_RATE_LIMIT_FLUSH_INTERVAL_SECONDS=10` |
 | `DB_URI`                      | Database connection URI                     | `file:storages/whatsapp.db?_foreign_keys=on` | `DB_URI=postgres://user:pass@host/db`       |
 | `WHATSAPP_AUTO_REPLY`         | Auto-reply message                          | -                                            | `WHATSAPP_AUTO_REPLY="Auto reply message"`  |
 | `WHATSAPP_AUTO_MARK_READ`     | Auto-mark incoming messages as read         | `false`                                      | `WHATSAPP_AUTO_MARK_READ=true`              |
@@ -136,6 +145,30 @@ To use environment variables:
 Note: Command-line flags will override any values set in environment variables or `.env` file.
 
 - For more command `./whatsapp --help`
+
+## API Authentication & Rate Limits
+
+Starting with this release every REST endpoint must be authenticated with a tenant-scoped API key. Basic auth is now used
+exclusively for the HTML control panel. API keys live inside the management PostgreSQL database (`api_keys` table) and
+are hashed using the configured `API_KEY_SALT` before being persisted. You can provision keys by interacting with the
+management repository (see [MANAGEMENT_DB_SETUP.md](./MANAGEMENT_DB_SETUP.md) for schema details) or by wiring your own
+small admin service around the new `usecase/api_key.go` helpers.
+
+- Send the key with **either** the `X-API-Key` header or the standard `Authorization: Bearer <key>` header:
+
+```bash
+curl -X GET \
+  -H "X-API-Key: sk_live_0123456789abcdef" \
+  "http://localhost:3000/app/status"
+```
+
+- Each tenant receives an isolated token bucket. The default rate limit is controlled via
+  `API_RATE_LIMIT_PER_MINUTE`, and you can override it per tenant by setting `metadata.rate_limit_per_minute` (or the
+  nested `metadata.rate_limit.requests_per_minute`) in the management database.
+- When a client exceeds its quota the server returns **HTTP 429** with a `Retry-After` header indicating how many
+  seconds to wait before retrying.
+- Every authenticated request is asynchronously recorded in the `audit_logs` table, capturing method, path, status, IP,
+  tenant ID, API key ID, server assignment, and request latency.
 
 ## Requirements
 
