@@ -13,3 +13,45 @@ services:
       - "3000:3000"
     env_file:
       - src/.env
+
+  telegram_auth:
+    build:
+      context: ./services/telegram_auth
+      dockerfile: Dockerfile
+    restart: "on-failure"
+    ports:
+      - "8080:8080"
+    env_file:
+      - ./services/telegram_auth/.env
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - telegram_auth_network
+
+  mysql:
+    image: mysql:8.0
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: telegram_auth
+      MYSQL_USER: telegram_user
+      MYSQL_PASSWORD: telegram_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - telegram_auth_network
+
+volumes:
+  mysql_data:
+
+networks:
+  telegram_auth_network:
+    driver: bridge
